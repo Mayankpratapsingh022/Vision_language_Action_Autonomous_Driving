@@ -42,12 +42,16 @@ def test_manual_runpod_command_uses_persistent_workspace() -> None:
 
 def test_runtime_environment_keeps_all_caches_under_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "test-token")
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
     environment = build_runtime_environment(Path("/workspace/act-driving"))
 
     assert environment["HF_TOKEN"] == "test-token"
     assert environment["HF_HOME"].startswith("/workspace/act-driving/")
     assert environment["TORCH_HOME"].startswith("/workspace/act-driving/")
     assert environment["MPLCONFIGDIR"].startswith("/workspace/act-driving/")
+    assert environment["HF_HUB_DISABLE_XET"] == "1"
+    assert environment["HF_HUB_ENABLE_HF_TRANSFER"] == "0"
     assert environment["TOKENIZERS_PARALLELISM"] == "false"
 
 

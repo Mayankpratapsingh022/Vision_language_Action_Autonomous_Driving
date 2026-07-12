@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
+from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 from transformers import AutoTokenizer
 
@@ -30,6 +31,49 @@ from urban_act.metrics import ActionMetricAccumulator, EvaluationSamples
 from urban_act.model import LanguageConditionedACT, ModelConfig
 from urban_act.plots import write_all_plots
 
+TRANSIENT_HUB_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _download_dataset_snapshot(
+    config: TrainConfig,
+    *,
+    token: str | None,
+    attempts: int = 5,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Path:
+    for attempt in range(1, attempts + 1):
+        try:
+            return Path(
+                snapshot_download(
+                    repo_id=config.dataset_repo,
+                    repo_type="dataset",
+                    revision=config.dataset_revision,
+                    cache_dir=config.cache_dir,
+                    token=token,
+                    allow_patterns=("config.yaml", "schema.json", "manifests/*.jsonl", "raw/accepted/**"),
+                )
+            )
+        except HfHubHTTPError as error:
+            status_code = error.response.status_code if error.response is not None else None
+            if attempt == attempts or status_code not in TRANSIENT_HUB_STATUS_CODES:
+                raise
+            delay_seconds = min(2 ** (attempt - 1), 16)
+            print(
+                json.dumps(
+                    {
+                        "event": "hub_download_retry",
+                        "attempt": attempt,
+                        "max_attempts": attempts,
+                        "status_code": status_code,
+                        "retry_in_seconds": delay_seconds,
+                    }
+                ),
+                flush=True,
+            )
+            sleep(delay_seconds)
+
+    raise RuntimeError("Dataset download retry loop exited unexpectedly")
+
 
 def run_training(
     config: TrainConfig,
@@ -44,16 +88,7 @@ def run_training(
     write_json(run_dir / "training_config.json", config.to_dict())
 
     token = os.environ.get("HF_TOKEN")
-    dataset_root = Path(
-        snapshot_download(
-            repo_id=config.dataset_repo,
-            repo_type="dataset",
-            revision=config.dataset_revision,
-            cache_dir=config.cache_dir,
-            token=token,
-            allow_patterns=("config.yaml", "schema.json", "manifests/*.jsonl", "raw/accepted/**"),
-        )
-    )
+    dataset_root = _download_dataset_snapshot(config, token=token)
     train_records = load_episode_records(dataset_root, "train")
     validation_records = load_episode_records(dataset_root, "validation")
     test_records = load_episode_records(dataset_root, "test")
