@@ -166,6 +166,7 @@ act-autonomous-driving/
 |-- tests/                        # CPU unit tests with dummy encoders
 |-- scripts/runpod_bootstrap.sh  # Remote dependency and training bootstrap
 |-- scripts/download_hf_run.py   # Copy a completed Hub run back locally
+|-- runpod_main.py               # One-command trainer for a manually created Pod
 |-- runpod_train.py              # Standalone persistent-volume trainer
 |-- runpod_launcher.py           # RunPod REST lifecycle client
 |-- modal_app.py                  # H100 training entrypoint
@@ -177,7 +178,74 @@ act-autonomous-driving/
 
 The video loader decodes each episode sequentially and constructs future action chunks in memory. It does not extract hundreds of thousands of PNG files before training.
 
-## RunPod setup
+## Manual RunPod training
+
+This is the simplest RunPod path. Create the GPU Pod in the RunPod dashboard, open its terminal, clone the repository, and execute one Python file. `runpod_main.py` handles Python dependencies, CUDA validation, persistent paths, training, resume, evaluation, logs, and the final Hugging Face upload. It does not create or terminate cloud resources.
+
+### 1. Create the Pod
+
+Use an on-demand H100 SXM or RTX PRO 6000 Pod with:
+
+- image: `pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime`
+- container disk: at least 30 GB
+- Pod volume mounted at `/workspace`: 50 GB
+- `HF_TOKEN`: a Hugging Face write token supplied as a RunPod secret/environment variable
+
+Pod-local `/workspace` data survives stopping and restarting the same Pod. It is deleted when that Pod is terminated, so wait for the Hugging Face upload or download the artifacts before termination.
+
+### 2. Clone the repository
+
+In the RunPod web terminal:
+
+```bash
+apt-get update && apt-get install -y git tmux
+cd /workspace
+git clone https://github.com/Mayankpratapsingh022/Action_Chunking_Transformer_Autonomous_Driving.git
+cd Action_Chunking_Transformer_Autonomous_Driving/act_training
+```
+
+The new manual entrypoint must be committed and pushed before cloning.
+
+### 3. Inspect and train
+
+The dry run prints paths and arguments without installing packages or starting training:
+
+```bash
+python3 runpod_main.py --dry-run
+```
+
+Start a persistent terminal session and launch the full H100 profile:
+
+```bash
+tmux new -s act-training
+
+python3 runpod_main.py \
+  --run-name act-driving-v1 \
+  --max-steps 10000 \
+  --batch-size 64
+```
+
+Detach with `Ctrl+B`, then `D`. Reattach later with:
+
+```bash
+tmux attach -t act-training
+```
+
+The first invocation installs the non-Torch requirements and the CUDA 12.8 TorchVision wheel, then verifies the GPU before downloading the dataset. If the selected template does not already contain Torch 2.8, add `--install-pytorch`. On later invocations, `--skip-setup` avoids the pip checks.
+
+### 4. Monitor and resume
+
+From another RunPod web terminal:
+
+```bash
+tail -F /workspace/act-driving/logs/act-driving-v1.log
+watch -n 2 nvidia-smi
+cat /workspace/act-driving/artifacts/status/act-driving-v1.json
+```
+
+Rerunning the same command resumes from `/workspace/act-driving/artifacts/runs/act-driving-v1/last.pt`. A successful run evaluates the best checkpoint and publishes the model, tokenizer, metrics, history, and plots to Hugging Face.
+
+## Automated RunPod API setup
 
 RunPod Pods are the recommended path when the account already has RunPod credits. The launcher uses the official REST API and Python's standard library; it does not require the RunPod Python SDK. No GPU is created unless `launch --yes` is used.
 
@@ -408,7 +476,7 @@ The zero image is only a shape example. Real inference must use the simulator's 
 These checks stay on the CPU. They do not request a RunPod or Modal GPU and do not start training.
 
 ```bash
-python -m compileall modal_app.py runpod_launcher.py runpod_train.py src tests scripts
+python -m compileall modal_app.py runpod_launcher.py runpod_main.py runpod_train.py src tests scripts
 python -m pytest
 ```
 

@@ -197,7 +197,17 @@ The full architecture, training defaults, artifact format, metrics, and inferenc
 
 ## Train on RunPod
 
-The RunPod launcher creates an on-demand H100 Pod through the REST API. It clones this repository, trains from the published Hugging Face dataset, stores resumable checkpoints on a network volume, and publishes the completed model and plots to Hugging Face. It requires `--yes` before creating billable compute.
+The simplest RunPod workflow is manual: create an H100 or RTX PRO 6000 Pod in the dashboard, clone this repository under `/workspace`, and run one Python entrypoint:
+
+```bash
+cd /workspace/Action_Chunking_Transformer_Autonomous_Driving/act_training
+python3 runpod_main.py --dry-run
+python3 runpod_main.py --run-name act-driving-v1 --max-steps 10000 --batch-size 64
+```
+
+`runpod_main.py` installs the remaining dependencies, validates CUDA, uses persistent `/workspace` paths, resumes checkpoints, streams logs, evaluates the best model, and pushes the completed artifact set to Hugging Face. The detailed manual setup is in the [ACT training guide](act_training/README.md#manual-runpod-training).
+
+The optional RunPod launcher creates an on-demand H100 Pod through the REST API. It clones this repository, trains from the published Hugging Face dataset, stores resumable checkpoints on a network volume, and publishes the completed model and plots to Hugging Face. It requires `--yes` before creating billable compute.
 
 Before launching, commit and push the RunPod files because the remote Pod clones the configured Git branch. Then configure `act_training/.env` with `RUNPOD_API_KEY` and `RUNPOD_NETWORK_VOLUME_ID`, and create a RunPod secret named `huggingface_token` containing the Hugging Face write token.
 
@@ -279,6 +289,7 @@ A trained checkpoint still needs closed-loop evaluation for route completion, co
 |   |-- src/urban_act/         # Python ACT package
 |   |-- configs/               # Training defaults
 |   |-- tests/                 # CPU unit tests
+|   |-- runpod_main.py         # Manual one-command RunPod trainer
 |   |-- runpod_train.py        # Standalone RunPod trainer
 |   |-- runpod_launcher.py     # RunPod REST lifecycle client
 |   `-- modal_app.py           # Modal H100 entrypoint
@@ -310,7 +321,7 @@ ACT package checks, without a GPU or training run:
 
 ```bash
 cd act_training
-python -m compileall modal_app.py runpod_launcher.py runpod_train.py src tests scripts
+python -m compileall modal_app.py runpod_launcher.py runpod_main.py runpod_train.py src tests scripts
 python -m pytest
 ```
 
