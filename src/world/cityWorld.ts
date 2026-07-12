@@ -91,10 +91,16 @@ export class CityWorld {
     this.build();
   }
 
-  update(time: number, egoPosition: THREE.Vector3, egoHeading: number, hazard: boolean): void {
+  update(
+    time: number,
+    egoPosition: THREE.Vector3,
+    egoHeading: number,
+    hazard: boolean,
+    signalOverride: TrafficLightState['state'] | null = null,
+  ): void {
     for (const light of this.trafficLights) {
       const phase = (time + Math.abs(light.position.x) * 0.01 + Math.abs(light.position.z) * 0.02) % 18;
-      light.state = phase < 9 ? 'green' : phase < 12 ? 'yellow' : 'red';
+      light.state = signalOverride ?? (phase < 9 ? 'green' : phase < 12 ? 'yellow' : 'red');
       for (const [index, state] of (['red', 'yellow', 'green'] as const).entries()) {
         const visual = this.signalVisuals.get(light.id)?.[index];
         if (!visual) continue;

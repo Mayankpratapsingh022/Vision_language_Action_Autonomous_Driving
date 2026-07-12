@@ -15,6 +15,7 @@ import type {
   ScenarioKind,
   TaskProgress,
   TrafficDensity,
+  TrafficLightState,
 } from './types';
 import { Hud } from './ui/hud';
 import { EpisodeVideoRecorder } from './vla/episodeVideoRecorder';
@@ -35,6 +36,11 @@ import { createRoadGraph, nearestRouteIndex } from './world/roadGraph';
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 const preview = document.getElementById('sensor-preview') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud-root') as HTMLElement;
+const requestedSignalState = new URLSearchParams(window.location.search).get('signals');
+const signalOverride: TrafficLightState['state'] | null =
+  requestedSignalState === 'green' || requestedSignalState === 'yellow' || requestedSignalState === 'red'
+    ? requestedSignalState
+    : null;
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -608,7 +614,13 @@ function animate(): void {
   lastGoalReached = taskProgress.reachedDestination;
 
   const hazard = actorStates.some((actor) => actor.position.distanceTo(ego.position) < actor.radius + 3.5);
-  world.update(elapsed, ego.position, ego.heading, hazard || ego.events.collision || Boolean(taskWarning));
+  world.update(
+    elapsed,
+    ego.position,
+    ego.heading,
+    hazard || ego.events.collision || Boolean(taskWarning),
+    signalOverride,
+  );
   world.setPresentationVisibility(
     cameraMode === 'autonomy' || cameraMode === 'bev',
     cameraMode !== 'front',

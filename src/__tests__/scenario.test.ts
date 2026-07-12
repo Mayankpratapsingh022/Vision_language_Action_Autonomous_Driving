@@ -1,4 +1,6 @@
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { CityWorld } from '../world/cityWorld';
 import { createRoadGraph } from '../world/roadGraph';
 import type { ScenarioConfig } from '../types';
 
@@ -35,5 +37,16 @@ describe('road graph generation', () => {
     expect(graph.route.length).toBeGreaterThan(250);
     expect(start.distanceTo(end)).toBeLessThan(10);
     expect(graph.intentText).toContain('curved loop');
+  });
+
+  it('supports a deterministic traffic-signal state for visual captures', () => {
+    const graph = createRoadGraph(base);
+    const world = new CityWorld(new THREE.Scene(), graph, base);
+
+    world.update(14, graph.start, 0, false, 'green');
+
+    expect(world.trafficLights.length).toBeGreaterThan(0);
+    expect(world.trafficLights.every((light) => light.state === 'green')).toBe(true);
+    world.dispose();
   });
 });
