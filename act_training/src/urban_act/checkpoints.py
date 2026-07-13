@@ -60,9 +60,11 @@ def training_state(
 
 def restore_rng_state(checkpoint: dict[str, Any]) -> None:
     if "torch_rng_state" in checkpoint:
-        torch.set_rng_state(checkpoint["torch_rng_state"])
+        torch.set_rng_state(checkpoint["torch_rng_state"].detach().cpu())
     if "cuda_rng_state" in checkpoint and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
+        torch.cuda.set_rng_state_all(
+            [state.detach().cpu() for state in checkpoint["cuda_rng_state"]]
+        )
     if "numpy_rng_state" in checkpoint:
         np.random.set_state(checkpoint["numpy_rng_state"])
     if "python_rng_state" in checkpoint:
