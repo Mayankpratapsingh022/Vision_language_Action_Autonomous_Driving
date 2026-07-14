@@ -104,9 +104,7 @@ def main() -> None:
         raise RuntimeError("HF_TOKEN is required because push_to_hub is enabled")
     _verify_cuda()
 
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
-    (artifacts_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     runtime_env = _runtime_environment(default_workspace.resolve())
 
     with log_path.open("a", buffering=1) as log_handle:
@@ -130,6 +128,10 @@ def main() -> None:
     if return_code != 0:
         raise RuntimeError(f"SmolVLA training exited with code {return_code}. See {log_path}")
 
+    # LeRobot rejects a fresh run when its output directory already exists. Keep
+    # wrapper artifacts out of that directory until LeRobot has created it.
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     write_training_plot(load_metrics(metrics_path), artifacts_dir / "training_curves.png")
     model_path = latest_pretrained_model(output_dir)
     if not args.skip_eval:
