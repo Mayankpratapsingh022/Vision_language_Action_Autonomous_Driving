@@ -16,6 +16,7 @@ import {
   faRobot,
   faRotateRight,
   faRoute,
+  faRepeat,
   faSliders,
   faStop,
   faVideo,
@@ -65,6 +66,8 @@ export interface HudState {
   inferenceEnabled: boolean;
   awaitingStart: boolean;
   recording: boolean;
+  autoCollectEnabled: boolean;
+  autoCollectedEpisodes: number;
   videoRecording: boolean;
   videoReady: boolean;
   samples: number;
@@ -92,6 +95,7 @@ export interface HudCallbacks {
   onToggleExpert: () => void;
   onToggleInference: () => void;
   onToggleRecording: () => void;
+  onToggleAutoCollect: () => void;
   onSaveVideo: () => void;
   onDownload: () => void;
   onReset: () => void;
@@ -170,7 +174,7 @@ export class Hud {
       </aside>
 
       <aside class="action-panel" aria-label="Action telemetry">
-        <div class="action-head"><span>ACT Action Vector</span><strong>[F, L, R, B]</strong></div>
+        <div class="action-head"><span>VLA Action Vector</span><strong>[F, L, R, B]</strong></div>
         <div class="action-bars">
           ${actionKeys.map((key) => `<div class="action-row" data-action-row="${key}"><span>${key === 'backward' ? 'Brake' : key[0].toUpperCase() + key.slice(1)}</span><div class="action-track"><i data-action-bar="${key}"></i></div><strong data-action-value="${key}">0.00</strong></div>`).join('')}
         </div>
@@ -185,6 +189,7 @@ export class Hud {
           <span class="record-ring">${svgIcon(faCircle, 'record-icon record-start')}${svgIcon(faStop, 'record-icon record-stop')}</span>
           <span data-status="recordLabel">Record</span>
         </button>
+        <button id="auto-collect-button" class="tool-button" title="Auto-record and save successful drives" aria-label="Toggle automatic dataset collection">${svgIcon(faRepeat, 'button-icon')}<span data-status="autoCollectLabel">Auto</span></button>
         <button id="reset-button" class="tool-button" title="Reset episode (N)" aria-label="Reset episode">${svgIcon(faRotateRight, 'button-icon')}<span>Reset</span></button>
         <button id="video-button" class="tool-button" title="Save episode video (V)" aria-label="Save episode video">${svgIcon(faVideo, 'button-icon')}<span data-status="videoLabel">Save</span></button>
         <button id="download-button" class="tool-button" title="Export dataset (E)" aria-label="Export dataset">${svgIcon(faDownload, 'button-icon')}<span>Export</span></button>
@@ -239,6 +244,7 @@ export class Hud {
     this.button('expert-button').addEventListener('click', callbacks.onToggleExpert);
     this.button('inference-button').addEventListener('click', callbacks.onToggleInference);
     this.button('record-button').addEventListener('click', callbacks.onToggleRecording);
+    this.button('auto-collect-button').addEventListener('click', callbacks.onToggleAutoCollect);
     this.button('video-button').addEventListener('click', callbacks.onSaveVideo);
     this.button('download-button').addEventListener('click', callbacks.onDownload);
     this.button('reset-button').addEventListener('click', callbacks.onReset);
@@ -282,6 +288,7 @@ export class Hud {
     this.setText('status', state.status);
     this.setText('taskWarning', state.taskWarning ?? '');
     this.setText('recordLabel', state.recording ? 'Stop' : 'Record');
+    this.setText('autoCollectLabel', state.autoCollectEnabled ? `Auto ${state.autoCollectedEpisodes}` : 'Auto');
     this.setText('videoLabel', state.videoRecording ? 'Recording' : 'Save');
     this.setText('collisions', String(state.collisions));
     this.setText('offRoute', String(state.offRoute));
@@ -290,8 +297,11 @@ export class Hud {
     this.toggleButton('expert-button', state.expertEnabled);
     this.toggleButton('inference-button', state.inferenceEnabled);
     this.toggleButton('record-button', state.recording);
+    this.toggleButton('auto-collect-button', state.autoCollectEnabled);
     this.toggleButton('video-button', state.videoReady || state.videoRecording);
     this.button('video-button').disabled = !state.videoReady;
+    this.button('record-button').disabled = state.autoCollectEnabled;
+    this.button('download-button').disabled = state.autoCollectEnabled;
     this.modeButtons.forEach((button) => button.classList.toggle('active', button.dataset.mode === state.runMode));
     this.cameraButtons.forEach((button) => button.classList.toggle('active', button.dataset.camera === state.cameraMode));
     this.root.classList.toggle('automated-driving', state.expertEnabled || state.inferenceEnabled);
@@ -367,7 +377,9 @@ export class Hud {
   }
 
   private toggleButton(id: string, active: boolean): void {
-    this.button(id).classList.toggle('active', active);
+    const button = this.button(id);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   }
 
   private control<T extends HTMLInputElement | HTMLSelectElement>(id: string): T {

@@ -2,9 +2,9 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
 const simUrl = process.env.SIM_URL ?? 'http://127.0.0.1:5173/';
-const timeoutMs = Number(process.env.ACT_SMOKE_TIMEOUT_MS ?? 45_000);
-const movementTimeoutMs = Number(process.env.ACT_MOVEMENT_TIMEOUT_MS ?? 5_000);
-const requireMovement = process.env.ACT_REQUIRE_MOVEMENT === '1';
+const timeoutMs = Number(process.env.VLA_SMOKE_TIMEOUT_MS ?? 45_000);
+const movementTimeoutMs = Number(process.env.VLA_MOVEMENT_TIMEOUT_MS ?? 5_000);
+const requireMovement = process.env.VLA_REQUIRE_MOVEMENT === '1';
 
 await mkdir('smoke-artifacts', { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -15,7 +15,7 @@ try {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.goto(simUrl, { waitUntil: 'networkidle' });
   await page.waitForSelector('#viewport');
-  await page.selectOption('#intent-select', 'continue_straight_intersection');
+  await page.selectOption('#intent-select', 'turn_left_intersection');
 
   const started = Date.now();
   await page.keyboard.press('i');
@@ -51,10 +51,10 @@ try {
     ])),
     inference: window.__VLA_DEBUG__?.getInferenceStats(),
   }));
-  await page.screenshot({ path: 'smoke-artifacts/act-inference.png' });
+  await page.screenshot({ path: 'smoke-artifacts/vla-inference.png' });
   if (pageErrors.length > 0) throw new Error(`Page errors: ${pageErrors.join('\n')}`);
   if (movementError && requireMovement) {
-    throw new Error(`ACT returned a prediction but the car did not move: ${JSON.stringify(result)}`);
+    throw new Error(`VLA returned a prediction but the car did not move: ${JSON.stringify(result)}`);
   }
   console.log(JSON.stringify({ firstActionMs, moved: movementError === null, ...result }, null, 2));
 } finally {

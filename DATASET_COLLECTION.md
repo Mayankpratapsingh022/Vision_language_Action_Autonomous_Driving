@@ -1,6 +1,6 @@
 # Dataset collection
 
-The collector generates simulator demonstrations only. It does not train ACT or a VLA.
+The collector generates simulator demonstrations only. It does not train the VLA policy.
 
 ## Requirements
 

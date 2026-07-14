@@ -1,399 +1,230 @@
-# Action Chunking Transformer for Autonomous Driving
+# SmolVLA for Autonomous Left Turns
 
-An end-to-end research project for language-conditioned autonomous driving. The repository contains the browser simulator, automated expert, dataset collector, recovery scenarios, and Python code for training an Action Chunking Transformer on RunPod or Modal.
+This repository pairs a Three.js driving simulator with a focused vision-language-action policy. The current experiment has one job: follow a natural-language instruction and complete the protected left turn in the simulator.
 
-![Autonomous-driving rollout with the policy camera observation and live ACT action-vector graph](docs/images/act-driving-observation-actions.gif)
+![Autonomous-driving rollout with the model camera and live VLA action vector](docs/images/vla-driving-observation-actions.gif)
+
+The policy is fine-tuned from Hugging Face's open [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base) checkpoint. SmolVLA reads the front camera, vehicle state, and instruction, then produces a continuous chunk of throttle, brake, and steering actions. The implementation follows the official [LeRobot SmolVLA workflow](https://huggingface.co/docs/lerobot/smolvla).
 
 ## Current status
 
 | Part | Status |
 | --- | --- |
-| TypeScript driving simulator | Working |
-| Automated expert and recovery controller | Working |
-| Dataset collection and validation | Complete |
-| Hugging Face dataset | Published |
-| Language-conditioned ACT training code | Complete and tested |
-| RunPod GPU training | V1 completed; v2 retraining code ready |
-| Trained checkpoint | V1 published but rejected by closed-loop launch test |
-| Local WebSocket inference | Implemented |
-| Closed-loop learned-policy evaluation | Integration works; v1 fails stationary launch |
+| Three.js driving simulator | Working |
+| Automatic human episode saving | Working |
+| Independent left-turn demonstrations | 156 collected |
+| Clean demonstrations selected for training | 127 episodes, 14,060 frames |
+| LeRobot v3 converter | Implemented |
+| SmolVLA fine-tuning on RunPod | Ready, not launched from this revision |
+| Held-out offline evaluation and plots | Implemented |
+| Browser WebSocket inference | Implemented |
+| Closed-loop checkpoint evaluation | Waiting for the new checkpoint |
 
-The first policy completed open-loop validation and test evaluation, then failed the stationary-launch closed-loop test. The corrected v2 objective and evaluation gates are implemented and locally tested; the next step is a new GPU run named `act-driving-v2`.
+The dataset size is reasonable for a first single-task fine-tune. LeRobot's SmolVLA guide suggests roughly 50 demonstrations as a starting point and warns that variation matters. This project has more demonstrations and 91 clean simulator seeds, but a successful training loss still does not guarantee stable closed-loop driving.
 
 ## Project flow
 
 ```mermaid
-flowchart TD
-    instruction[Language instruction]
-    scenario[Scenario configuration]
+flowchart LR
+    human[Human drives protected left turns]
+    raw[Independent JSON episodes]
+    filter[Episode quality filter]
+    lerobot[(LeRobot v3 dataset)]
+    base[SmolVLA 450M base]
+    train[RunPod fine-tuning]
+    model[(Fine-tuned VLA on Hugging Face)]
+    server[Local WebSocket inference]
+    sim[Closed-loop simulator]
+    eval[Completion and safety evaluation]
 
-    subgraph simulator[TypeScript and Three.js simulator]
-        world[Urban driving environment]
-        observation[Front RGB and vehicle state]
-        expert[Rules-based driving expert]
-        world --> observation
-        world --> expert
-    end
+    human --> raw --> filter --> lerobot
+    lerobot --> train
+    base --> train --> model --> server --> sim --> eval
+    eval -. failed rollouts become reviewed data .-> human
 
-    instruction --> world
-    scenario --> world
-    observation --> demonstrations[Nominal and recovery demonstrations]
-    expert --> demonstrations
-    expert --> failures[Unsafe failure episodes]
-
-    demonstrations --> dataset[(Hugging Face expert dataset)]
-    failures --> analysis[Safety analysis only]
-    dataset --> training[Language-conditioned ACT cloud training]
-    training --> chunks[Throttle, brake, and steering action chunks]
-    chunks --> evaluation[Closed-loop simulator evaluation]
-    evaluation -. rollout feedback .-> world
-
-    classDef input fill:#eef6ff,stroke:#3273a8,color:#17212b;
-    classDef system fill:#f4f5f7,stroke:#59636e,color:#17212b;
     classDef data fill:#eef8f1,stroke:#348854,color:#17212b;
-    classDef warning fill:#fff5e6,stroke:#b87516,color:#17212b;
-
-    class instruction,scenario input;
-    class world,observation,expert,training,chunks,evaluation system;
-    class demonstrations,dataset data;
-    class failures,analysis warning;
+    classDef model fill:#eef6ff,stroke:#3273a8,color:#17212b;
+    classDef system fill:#f4f5f7,stroke:#59636e,color:#17212b;
+    class raw,lerobot,model data;
+    class base,train,server model;
+    class human,filter,sim,eval system;
 ```
 
-The simulator and policy code live together so the data contract is visible from both sides. Camera resolution, state order, action order, frame rate, instructions, and split assignments are documented rather than hidden in separate projects.
+## Policy contract
 
-## Driving simulator
+Every training frame and live inference request uses the same fields:
 
-The simulator uses **Vite, TypeScript, and Three.js**. It is not a Next.js application.
+```text
+camera:       128 x 128 front RGB image
+state:        [speed_mps, steering, previous_throttle, previous_brake]
+instruction:  "Proceed through the city and make the protected left turn at the main intersection."
+action:       [throttle, brake, steering]
+rate:         10 Hz
+```
 
-It provides:
+The raw recorder stores speed normalized to the simulator's 24 m/s limit. The converter restores metres per second before writing `observation.state`; this keeps training aligned with the browser's live state. The model predicts 20 future actions and executes three before replanning from a new image.
 
-- a 3D urban road environment with traffic and pedestrians
-- a front-camera model view for policy observations
-- deterministic world and traffic seeds
-- clear, rain, and fog conditions
-- low, medium, and high traffic density
-- live speed, steering, route progress, collision, and off-route telemetry
-- training and inference interface modes
-- continuous controls for throttle, brake, and steering
+Only the front camera is used. The bird's-eye image remains in the raw recording for inspection but is intentionally excluded from training because it is not an onboard sensor and the live policy should not depend on it.
 
-### Language-conditioned scenarios
+## Dataset selection
 
-The current scenario set covers:
+The top-level `Dataset/` folder currently contains:
 
-- left, right, and straight intersection routes
-- traffic-light compliance
-- pedestrian stopping
-- passing a slow vehicle
-- yielding to a cut-in vehicle
-- following a curved road
-- taking a detour around a blocked lane
+- 156 independent files named `human-*.json`
+- 17,547 recorded frames
+- 127 clean nominal episodes
+- 29 episodes containing a collision or off-route event
+- 57 old cumulative exports named `vla_urban_dataset_*.json`
 
-Roundabouts are intentionally absent from this version.
+The converter ignores all cumulative exports. By default it also excludes collision and off-route episodes from nominal imitation, checks the instruction and image shape, rejects exact duplicates, requires at least 60 frames, and requires route progress of at least 95%.
+It places a seed-disjoint set of episodes in the final 10% of the dataset, matching LeRobot's holdout convention without leaking the same simulator seed into training and validation.
 
-### Run the simulator
-
-Requirements:
-
-- Node.js 22 or newer
-- a current Chrome or Chromium browser
+Inspect the selection without writing anything:
 
 ```bash
-git clone https://github.com/Mayankpratapsingh022/Action_Chunking_Transformer_Autonomous_Driving.git
-cd Action_Chunking_Transformer_Autonomous_Driving
+cd vla_training
+python3 convert_dataset.py --dry-run
+```
+
+Create the LeRobot dataset and publish it:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e .
+
+python convert_dataset.py \
+  --overwrite \
+  --push-to-hub \
+  --repo-id Mayank022/urban-vla-left-turn-human
+```
+
+The generated dataset is written below `vla_training/data/`, which is ignored by Git. A `conversion_report.json` file records every accepted and rejected source episode.
+
+## Run the simulator
+
+Requirements are Node.js 22 or newer and a current Chrome or Chromium browser.
+
+```bash
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite, normally `http://localhost:5173`.
+Open the URL printed by Vite, normally `http://localhost:5173`. Select the left-turn intent, click **Auto**, choose the `Dataset` folder once, and drive. A successful route saves one independent JSON episode and resets the simulator with the next seed.
 
-### Run the trained policy
+## Fine-tune on RunPod
 
-The completed `act-driving-v1` model is published at [`Mayank022/urban-vla-language-act`](https://huggingface.co/Mayank022/urban-vla-language-act). Download it once; the ignored local artifact directory keeps the large weights out of Git:
+An RTX PRO 6000 with 96 GB VRAM is more than sufficient for the default batch size of 32. The vision encoder is unfrozen because simulated road imagery differs sharply from SmolVLA's robot-manipulation pretraining data.
+
+On a fresh RunPod Pod:
 
 ```bash
-npm run model:download
+cd /workspace
+git clone https://github.com/Mayankpratapsingh022/Action_Chunking_Transformer_Autonomous_Driving.git
+cd Action_Chunking_Transformer_Autonomous_Driving/vla_training
+
+./scripts/setup_runpod.sh
+printf '%s\n' 'HF_TOKEN=hf_your_write_token' > .env
+./scripts/start_runpod_tmux.sh
 ```
 
-Install the Python inference dependencies when they are not already available:
+Monitor it from the Pod:
 
 ```bash
-cd act_training
+tmux attach -t smolvla-left-turn
+```
+
+Or follow the persistent log from another shell:
+
+```bash
+tail -F /workspace/vla-driving/logs/smolvla-left-turn-v1-launcher.log
+```
+
+The default run uses 20,000 steps, a batch size of 32, a 10% episode-level validation split, validation every 1,000 steps, and checkpoints every 2,000 steps. Restarting the same command resumes from `checkpoints/last` automatically.
+
+The final model is published to [`Mayank022/urban-vla-left-turn-smolvla`](https://huggingface.co/Mayank022/urban-vla-left-turn-smolvla). Training configuration, processor statistics, evaluation metrics, plots, and the full log are uploaded with it.
+
+See [vla_training/README.md](vla_training/README.md) for dry runs, overrides, resume behavior, and artifact paths.
+
+## Run the fine-tuned model
+
+Create the Python environment once:
+
+```bash
+cd vla_training
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-inference.txt
+python -m pip install -e .
+python scripts/download_model.py
 cd ..
 ```
 
-Run the model server in one terminal:
+Start inference in one terminal:
 
 ```bash
-npm run inference
+npm run inference -- --model-path vla_training/artifacts/smolvla-left-turn-v1
 ```
 
-Run the simulator in a second terminal:
+Start Vite in another:
 
 ```bash
 npm run dev
 ```
 
-Open the Vite URL and press `I`, or select **Inference** and use the inference control. The browser sends the current `128 x 128` front-camera image, language instruction, speed, steering, previous throttle, and previous brake to `ws://localhost:8000/ws`. The server predicts a 20-step ACT chunk, executes three continuous controls, then replans from the latest observation.
+Open the simulator and press `I`. The server uses CUDA when available, then Apple MPS, then CPU. It rejects instructions other than the protected left turn because this checkpoint is deliberately single-task.
 
-The local model server exposes a readiness check at [`http://localhost:8000/health`](http://localhost:8000/health). It selects CUDA, then Apple MPS, then CPU. Disconnecting the server stops learned-policy control instead of continuing with stale actions.
-
-With both processes running, `npm run smoke:inference` verifies the socket and a real model response. `npm run eval:closed-loop` additionally requires the vehicle to move and currently fails for the published v1 checkpoint, preserving the longitudinal-collapse result as an explicit regression test.
-
-## Expert driving and recovery
-
-The automated expert is a rules-based controller, not a trained model. It follows the route, tracks the lane, manages speed, responds to scenario actors, and produces continuous expert actions.
-
-Driving variation comes from scenario seeds, traffic seeds, weather, traffic density, route variants, instruction paraphrases, and cautious, normal, or assertive expert profiles.
-
-Recovery episodes begin from controlled disturbances such as:
-
-- lateral position offsets
-- heading errors
-- overspeed
-- stalled starts
-
-The target remains safe expert behavior: return to the route and continue the instruction. Deliberately unsafe episodes are stored separately for analysis and are never used as imitation targets.
-
-## Dataset
-
-The completed dataset is published at [`Mayank022/urban-vla-expert-v1`](https://huggingface.co/datasets/Mayank022/urban-vla-expert-v1).
-
-Dataset composition:
-
-| Category | Episodes | Use |
-| --- | ---: | --- |
-| Nominal expert | 900 | Behavior cloning |
-| Expert recovery | 180 | Behavior cloning |
-| Unsafe failure analysis | 90 | Analysis only |
-
-The 1,080 expert episodes use this fixed split:
-
-| Split | Episodes | Frames | Hours | Use |
-| --- | ---: | ---: | ---: | --- |
-| Train | 756 | 224,133 | 6.23 | Optimization |
-| Validation | 162 | 47,614 | 1.32 | Model selection |
-| Test | 162 | 47,933 | 1.33 | Final open-loop evaluation |
-
-Each expert frame contains:
-
-```text
-front image:  256 x 256 RGB at 10 Hz
-state:        [speed_mps, steering, previous_throttle, previous_brake]
-instruction:  natural-language driving command
-action:       [throttle, brake, steering]
-```
-
-Download the full dataset without adding its large videos to Git:
-
-```bash
-hf download Mayank022/urban-vla-expert-v1 \
-  --repo-type dataset \
-  --local-dir datasets/urban-vla-expert-v1
-```
-
-See [DATASET_COLLECTION.md](DATASET_COLLECTION.md) for collection, background execution, resume, validation, and folder details.
-
-## Action Chunking Transformer
-
-The policy is a **language-conditioned Action Chunking Transformer (ACT)**. It predicts 20 future controls from one observation, which corresponds to a two-second plan at 10 Hz.
-
-### Inputs
-
-- current `128 x 128` front-camera tensor, resized from the stored `256 x 256` video
-- four-dimensional vehicle state
-- natural-language route instruction
-
-### Deep-learning architecture
-
-```text
-camera ------> pretrained ResNet-18 ------> 16 spatial vision tokens
-state  ------> state MLP -----------------> state token
-language ----> frozen MiniLM -------------> language token
-actions -----> CVAE posterior ------------> latent token during training
-
-all context tokens --> Transformer encoder
-20 action queries  --> Transformer decoder --> [throttle, brake, steering] x 20
-```
-
-The action transformer and CVAE learn from the driving dataset. ResNet-18 is fine-tuned at a smaller learning rate, while MiniLM is frozen by default. This is a practical setup for a dataset with fewer than nine hours of expert driving; it does not pretend to pretrain vision and language from scratch.
-
-The source videos remain at `256 x 256`. PyAV resizes frames to `128 x 128` while decoding, so there is no separate converted dataset and no additional copy stored on disk.
-
-The v2 objective is:
-
-```text
-loss = balanced longitudinal activity BCE
-     + active-only throttle/brake magnitude SmoothL1
-     + turn-weighted steering SmoothL1
-     + throttle/brake overlap penalty
-     + warmed latent KL divergence
-```
-
-Stationary launch, throttle, brake, turn, and recovery windows receive extra sample weight. Padded actions at episode boundaries are excluded by a mask. During inference the CVAE latent is set to zero, making the predicted chunk deterministic for the same observation and instruction.
-
-The full architecture, training defaults, artifact format, metrics, and inference API are documented in the [ACT training guide](act_training/README.md).
-
-### Trained result
-
-The best checkpoint occurred at step 10,000. Held-out test results were:
-
-| Metric | Result |
-| --- | ---: |
-| Mean action MAE | `0.06696` |
-| Throttle MAE | `0.09242` |
-| Brake MAE | `0.04452` |
-| Steering MAE | `0.06395` |
-| Brake accuracy | `91.65%` |
-| Steering-direction accuracy | `65.64%` |
-| Throttle/brake overlap rate | `0.00%` |
-
-Overtaking was the weakest held-out intent (`0.14000` MAE), followed by right turns (`0.09216`). Closed-loop runs should focus on those cases before extending training.
-
-The first closed-loop smoke run exposed a stronger limitation than aggregate MAE: `act-driving-v1` predicts near-zero throttle and brake, including on held-out startup frames whose target throttle is `1.0`. The published prediction plots show the same longitudinal collapse, while steering retains partial signal. This is consistent with plain L1 converging to the zero median of the action distribution. The WebSocket integration intentionally applies the learned policy rather than hiding the failure with an expert speed controller.
-
-V2 now uses separate activity and magnitude heads, class balancing from the training split, critical-window weights, active-action metrics, and mandatory publication gates. The old architecture remains loadable for comparison, but new training defaults use v2.
-
-## Train on RunPod
-
-The simplest RunPod workflow is manual: create an H100 or RTX PRO 6000 Pod in the dashboard, clone this repository under `/workspace`, and run one Python entrypoint:
-
-```bash
-cd /workspace/Action_Chunking_Transformer_Autonomous_Driving/act_training
-python3 runpod_main.py --dry-run
-PYTHONPATH=src python3 scripts/check_v2_objective.py
-python3 runpod_main.py --run-name act-driving-v2 --max-steps 2000 --batch-size 64 --no-push-to-hub
-```
-
-Inspect the pilot gates, then resume the same run to 10,000 steps by removing `--no-push-to-hub` and adding `--skip-setup`. `runpod_main.py` installs the remaining dependencies, validates CUDA, uses persistent `/workspace` paths, resumes checkpoints, streams logs, evaluates the best model, and only promotes a checkpoint to Hugging Face when validation and test gates pass. The detailed manual setup is in the [ACT training guide](act_training/README.md#manual-runpod-training).
-
-The optional RunPod launcher creates an on-demand H100 Pod through the REST API. It clones this repository, trains from the published Hugging Face dataset, stores resumable checkpoints on a network volume, and publishes the completed model and plots to Hugging Face. It requires `--yes` before creating billable compute.
-
-Before launching, commit and push the RunPod files because the remote Pod clones the configured Git branch. Then configure `act_training/.env` with `RUNPOD_API_KEY` and `RUNPOD_NETWORK_VOLUME_ID`, and create a RunPod secret named `huggingface_token` containing the Hugging Face write token.
-
-```bash
-cd act_training
-
-python3 runpod_launcher.py launch --dry-run
-python3 runpod_launcher.py launch --yes
-
-python3 runpod_launcher.py watch
-python3 runpod_launcher.py logs
-```
-
-The lifecycle watcher reports Pod allocation and exit state. The RunPod dashboard shows the full training stream, including step, percent, loss, elapsed time, ETA, and validation metrics. After the Pod reaches `EXITED`, remove its Pod record without deleting the network volume:
-
-```bash
-python3 runpod_launcher.py terminate --yes
-```
-
-The full API-key, secret, network-volume, resume, monitoring, and artifact-download workflow is in the [ACT training guide](act_training/README.md).
-
-## Train on Modal
-
-No Modal job has been launched from this repository. These commands are for the future training run.
-
-The default H100 profile uses BF16, fused AdamW, a batch size of 64, and 10,000 optimizer steps. That keeps the training budget at 640,000 samples.
-
-```bash
-cd act_training
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-local.txt
-
-hf auth login
-modal setup
-
-test -f .env || cp .env.example .env
-# Edit .env and set HF_TOKEN.
-
-./scripts/start_h100_tmux.sh
-```
-
-Monitor the run from another terminal:
-
-```bash
-modal app logs urban-vla-language-act-training
-```
-
-Training checkpoints are committed to a persistent Modal Volume every 500 steps. Re-running with the same name loads `last.pt` and continues. When training completes, the entrypoint downloads the artifacts locally and publishes the checkpoint, tokenizer, metrics, and plots to Hugging Face.
+The readiness endpoint is [`http://localhost:8000/health`](http://localhost:8000/health). With both services running, `npm run smoke:inference` checks the socket and one real prediction. `npm run eval:closed-loop` also requires the vehicle to move.
 
 ## Evaluation
 
-The Python trainer measures held-out action imitation with:
+The training run measures held-out flow-matching loss. After training, `evaluate.py` replays the held-out episodes through the final policy and saves:
 
 - throttle, brake, and steering MAE and RMSE
-- active-action MAE and improvement over an all-zero baseline
-- throttle and brake precision, recall, F1, and confusion counts
-- stationary-launch throttle recall
-- steering-direction accuracy
+- throttle and brake precision, recall, and F1
+- steering-direction accuracy during active turns
 - simultaneous throttle-and-brake rate
-- per-intent action MAE
-- collapse detection and quality-gate status
+- per-episode error
+- prediction scatter and action-trace plots
 
-These are open-loop metrics. They compare predicted controls with recorded expert controls, but a small error does not guarantee stable driving.
-
-A trained checkpoint still needs closed-loop evaluation for route completion, collisions, off-road time, traffic-light violations, pedestrian violations, recovery success, and control smoothness. The continuous-control WebSocket adapter is implemented; `npm run eval:closed-loop` remains an intentional failure for v1 and should be rerun after downloading v2.
+These are open-loop checks. The real acceptance test is closed-loop: route completion, collisions, off-route time, control smoothness, and repeated success on unseen seeds. A checkpoint should not be called good solely because its offline MAE is low.
 
 ## Repository structure
 
 ```text
 .
-|-- src/
-|   |-- world/                 # Road graph and city construction
-|   |-- entities/              # Ego vehicle and traffic
-|   |-- collection/            # Recovery and collection protocol
-|   |-- vla/                   # Expert, recorder, video, inference client
-|   |-- visual/                # Vehicle and render-quality layers
-|   `-- ui/                    # Simulator HUD
-|-- scripts/                   # Collection, validation, audit, conversion
-|-- datasets/                  # Manifests and local dataset workspace
-|-- act_training/
-|   |-- src/urban_act/         # Python ACT package
-|   |-- configs/               # Training defaults
-|   |-- tests/                 # CPU unit tests
-|   |-- runpod_main.py         # Manual one-command RunPod trainer
-|   |-- runpod_train.py        # Standalone RunPod trainer
-|   |-- runpod_launcher.py     # RunPod REST lifecycle client
-|   `-- modal_app.py           # Modal H100 entrypoint
-|-- docs/images/               # Tracked documentation media
+|-- src/                         # Simulator, traffic, recorder, HUD, inference client
+|-- scripts/                     # Simulator checks and dataset collection tools
+|-- datasets/                    # Automated expert dataset workspace
+|-- vla_training/
+|   |-- configs/left_turn.json   # Fine-tuning defaults
+|   |-- src/left_turn_vla/       # Conversion, commands, metrics, model adapter
+|   |-- tests/                   # CPU tests without downloading model weights
+|   |-- convert_dataset.py       # Human JSON to LeRobot v3
+|   |-- train.py                 # Official LeRobot trainer wrapper
+|   |-- evaluate.py              # Held-out action evaluation and plots
+|   |-- inference_server.py      # Browser WebSocket server
+|   `-- runpod_main.py           # RunPod entrypoint
+|-- docs/images/
 |-- DATASET_COLLECTION.md
-|-- package.json
-`-- README.md
+`-- package.json
 ```
 
-Large raw episodes, generated artifacts, caches, and secrets are excluded from Git.
-
 ## Verification
-
-Simulator checks:
 
 ```bash
 npm run check
 npm run smoke
 npm run audit
+
+cd vla_training
+PYTHONPATH=src python -m pytest
+python convert_dataset.py --dry-run
+python train.py --dry-run
 ```
 
-Dataset validation:
+No GPU training is started by these commands.
 
-```bash
-npm run dataset:validate
-```
+## Safety
 
-ACT package checks, without a GPU or training run:
-
-```bash
-cd act_training
-python -m compileall modal_app.py runpod_launcher.py runpod_main.py runpod_train.py src tests scripts
-python -m pytest
-```
-
-The ACT unit tests cover configuration validation, dataset split handling, failure-data exclusion, bounded actions, deterministic inference, masked loss, and gradient flow.
-
-## Limits and safety
-
-This is a simulator research project. The camera images, traffic, vehicle dynamics, and expert policy are synthetic. Neither open-loop metrics nor simulator route completion would make the resulting checkpoint safe for public roads.
-
-Do not connect a model from this project to a real vehicle.
+This is a synthetic simulator experiment. The vehicle dynamics, camera images, traffic, and demonstrations do not represent the range of conditions on public roads. Do not connect this policy to a real vehicle.

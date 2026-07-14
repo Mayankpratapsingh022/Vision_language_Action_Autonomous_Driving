@@ -128,7 +128,7 @@ print(telemetry[0]["observation"]["state"])
 print(telemetry[0]["action"])
 ```
 
-Decode `front.mp4` with PyAV, OpenCV, or FFmpeg. The training code in [`Mayank022/urban-vla-language-act`](https://huggingface.co/Mayank022/urban-vla-language-act) streams each video sequentially and builds future action chunks without expanding every frame into a separate image file.
+Decode `front.mp4` with PyAV, OpenCV, or FFmpeg. The current VLA workflow converts the separate human left-turn recordings into LeRobot v3 before fine-tuning.
 
 ## Collection and checks
 

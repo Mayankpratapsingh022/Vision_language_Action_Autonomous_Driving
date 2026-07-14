@@ -19,6 +19,11 @@ import type {
 } from './types';
 import { Hud } from './ui/hud';
 import { EpisodeVideoRecorder } from './vla/episodeVideoRecorder';
+import {
+  chooseDatasetDirectory,
+  humanEpisodeFilename,
+  type DatasetDirectoryHandle,
+} from './vla/datasetStorage';
 import { ExpertDriver } from './vla/expertDriver';
 import { InferenceClient } from './vla/inferenceClient';
 import {
@@ -108,6 +113,10 @@ let pendingRespawnIndex: number | null = null;
 let previewTimer = 0;
 let hudTimer = 0;
 let inferenceTimer = 0;
+let autoCollectEnabled = false;
+let autoCollectEpisodeActive = false;
+let autoCollectedEpisodes = 0;
+let autoCollectDirectory: DatasetDirectoryHandle | null = null;
 
 let recorder = createRecorder();
 const episodeVideo = new EpisodeVideoRecorder();
@@ -134,6 +143,7 @@ const hud = new Hud(hudRoot, {
   onToggleExpert: toggleExpertDriver,
   onToggleInference: toggleInferenceDriver,
   onToggleRecording: toggleDatasetRecording,
+  onToggleAutoCollect: () => void toggleAutoCollect(),
   onSaveVideo: saveFinalVideo,
   onDownload: exportDataset,
   onReset: () => resetIteration('Scenario reset. Press WASD/arrows to start'),
@@ -144,6 +154,7 @@ const hud = new Hud(hudRoot, {
 }, hudState());
 
 function reloadScenario(partial: Partial<ScenarioConfig>): void {
+  autoCollectEpisodeActive = false;
   recorder.dispose();
   ego.dispose();
   world.dispose();
@@ -261,7 +272,7 @@ function commandFromInference(): ControlCommand | null {
     && raw.brake < 0.01
     && Math.abs(raw.steer) < 0.01
   ) {
-    status = `ACT ${result.latencyMs.toFixed(0)} ms: checkpoint predicts idle at startup`;
+    status = `VLA ${result.latencyMs.toFixed(0)} ms: checkpoint predicts idle at startup`;
   }
   return result.action;
 }
@@ -326,6 +337,10 @@ function toggleInferenceDriver(): void {
 }
 
 function toggleDatasetRecording(): void {
+  if (autoCollectEnabled) {
+    status = 'Auto collect manages recording. Turn Auto off for manual recording';
+    return;
+  }
   if (recorder.recording) recorder.stop();
   else recorder.start();
   status = recorder.recording ? 'Recording VLA dataset' : 'Recording stopped';
@@ -337,11 +352,54 @@ function saveFinalVideo(): void {
 }
 
 function exportDataset(): void {
-  recorder.download();
+  if (autoCollectEnabled) {
+    status = 'Auto collect saves each successful drive automatically';
+    return;
+  }
+  void recorder.download();
   status = `Exported ${recorder.samples.length} samples`;
 }
 
+async function toggleAutoCollect(): Promise<void> {
+  if (autoCollectEnabled) {
+    autoCollectEnabled = false;
+    autoCollectEpisodeActive = false;
+    if (recorder.recording) recorder.stop();
+    status = recorder.samples.length > 0
+      ? `Auto collect off. ${recorder.samples.length} unsaved samples retained`
+      : 'Auto collect off';
+    return;
+  }
+
+  const resetCurrentEpisode = !awaitingStart || episodeVideo.recording;
+  try {
+    autoCollectDirectory = await chooseDatasetDirectory();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      status = 'Auto collect was not enabled';
+      return;
+    }
+    status = error instanceof Error ? `Could not select dataset folder: ${error.message}` : 'Could not select dataset folder';
+    return;
+  }
+
+  autoCollectEnabled = true;
+  autoCollectEpisodeActive = false;
+  if (recorder.recording) recorder.stop();
+  recorder.clear();
+  setRunMode('training');
+  if (resetCurrentEpisode) {
+    await episodeVideo.stop();
+    resetEpisode('Auto collect ready. Drive to start; successful episodes save automatically');
+    return;
+  }
+  status = autoCollectDirectory
+    ? 'Auto collect ready. Drive to start; successful episodes save to the selected folder'
+    : 'Auto collect ready. Your browser may ask permission for multiple downloads';
+}
+
 function resetIteration(message = 'Next iteration. Press WASD/arrows to start'): void {
+  discardAutoCollectionAttempt();
   void episodeVideo.stop().then(() => {
     resetEpisode(message);
   });
@@ -354,6 +412,7 @@ function setCaptureResolution(resolution: CaptureResolution): void {
   if (wasRecording) recorder.stop();
   recorder.dispose();
   recorder = createRecorder();
+  autoCollectEpisodeActive = false;
   status = `Model view set to ${resolution} x ${resolution}. Dataset buffer reset`;
 }
 
@@ -367,6 +426,7 @@ function startInferenceEpisode(): void {
 
 function startEpisode(mode: 'manual' | 'expert' | 'inference'): void {
   if (episodeFinishing) return;
+  const startingNewEpisode = awaitingStart;
   runMode = mode === 'inference' ? 'inference' : 'training';
   awaitingStart = false;
   expertEnabled = mode === 'expert';
@@ -376,11 +436,26 @@ function startEpisode(mode: 'manual' | 'expert' | 'inference'): void {
     status = 'Video recording unavailable in this browser';
     return;
   }
+  if (startingNewEpisode && mode === 'manual' && autoCollectEnabled) {
+    recorder.stop();
+    recorder.clear();
+    recorder.start();
+    autoCollectEpisodeActive = true;
+  }
   status = mode === 'expert'
     ? 'Expert driver active'
     : mode === 'inference'
       ? 'Inference mode uses last server prediction'
-      : 'Manual control';
+      : autoCollectEpisodeActive
+        ? 'Manual control: auto-recording this episode'
+        : 'Manual control';
+}
+
+function discardAutoCollectionAttempt(): void {
+  if (!autoCollectEpisodeActive) return;
+  recorder.stop();
+  recorder.clear();
+  autoCollectEpisodeActive = false;
 }
 
 function resetEpisode(message: string): void {
@@ -422,12 +497,40 @@ function finishEpisodeAtDestination(): void {
   expertEnabled = false;
   inferenceEnabled = false;
   latestCommand = { throttle: 0, brake: 0, steer: 0 };
-  if (recorder.recording) recorder.stop();
+  const completedRecorder = recorder;
+  const shouldAutoSave = autoCollectEnabled
+    && autoCollectEpisodeActive
+    && completedRecorder.recording
+    && completedRecorder.samples.length > 0;
+  const sampleCount = completedRecorder.samples.length;
+  const episodeNumber = autoCollectedEpisodes + 1;
+  const nextSeed = config.seed >= 2_147_483_646 ? 0 : config.seed + 1;
+  const filename = humanEpisodeFilename(selectedLanguageIntentId, config.seed, episodeNumber);
+  if (completedRecorder.recording) completedRecorder.stop();
+  autoCollectEpisodeActive = false;
   status = episodeVideo.recording ? 'Destination reached. Preparing final video' : 'Destination reached';
-  void episodeVideo.stop().then((videoReady) => {
+  const savePromise = shouldAutoSave
+    ? (autoCollectDirectory
+        ? completedRecorder.saveToDirectory(autoCollectDirectory, filename)
+        : completedRecorder.download(filename))
+    : Promise.resolve(null);
+  void Promise.all([episodeVideo.stop(), savePromise]).then(([videoReady, saveTarget]) => {
+    if (saveTarget) {
+      autoCollectedEpisodes++;
+      completedRecorder.clear();
+      reloadScenario({ seed: nextSeed });
+      status = `Auto-saved drive ${autoCollectedEpisodes} (${sampleCount} samples). Seed ${nextSeed} is ready for the next run`;
+      return;
+    }
     resetEpisode(videoReady
       ? 'Destination reached. Save final video or press WASD/arrows to start'
       : 'Destination reached. Press WASD/arrows to start');
+  }).catch((error: unknown) => {
+    autoCollectEnabled = false;
+    autoCollectEpisodeActive = false;
+    resetEpisode(error instanceof Error
+      ? `Auto-save failed: ${error.message}. Samples retained for manual export`
+      : 'Auto-save failed. Samples retained for manual export');
   });
 }
 
@@ -562,6 +665,8 @@ function hudState() {
     inferenceEnabled,
     awaitingStart,
     recording: recorder.recording,
+    autoCollectEnabled,
+    autoCollectedEpisodes,
     videoRecording: episodeVideo.recording,
     videoReady: episodeVideo.ready,
     samples: recorder.samples.length,

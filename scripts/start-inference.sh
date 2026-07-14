@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TRAINING_DIR="$ROOT_DIR/act_training"
+TRAINING_DIR="$ROOT_DIR/vla_training"
 
-if [[ -n "${ACT_PYTHON:-}" ]]; then
-  PYTHON_BIN="$ACT_PYTHON"
+if [[ -n "${VLA_PYTHON:-}" ]]; then
+  PYTHON_BIN="$VLA_PYTHON"
 elif [[ -x "$TRAINING_DIR/.venv/bin/python" ]]; then
   PYTHON_BIN="$TRAINING_DIR/.venv/bin/python"
 elif [[ -n "${CONDA_PREFIX:-}" && -x "$CONDA_PREFIX/bin/python" ]]; then

@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('InferenceClient', () => {
-  it('sends synchronized ACT observations and allows only one in-flight request', async () => {
+  it('sends synchronized VLA observations and allows only one in-flight request', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const client = new InferenceClient();
     const connecting = client.connect('http://localhost:8000');

@@ -122,6 +122,36 @@ try {
       if (!videoLabel.includes('Recording')) {
         throw new Error(`episode video did not start after key input: ${videoLabel}`);
       }
+      await page.click('#record-button');
+      await page.click('#reset-button');
+      await page.waitForTimeout(700);
+      await page.evaluate(() => {
+        Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: undefined });
+      });
+      await page.click('#auto-collect-button');
+      const autoButton = page.locator('#auto-collect-button');
+      await page.waitForFunction(() => document.querySelector('#auto-collect-button')?.classList.contains('active'));
+      if (!(await autoButton.getAttribute('class'))?.includes('active')) {
+        throw new Error('auto collection did not arm');
+      }
+      if (!(await page.locator('#record-button').isDisabled()) || !(await page.locator('#download-button').isDisabled())) {
+        throw new Error('manual record/export controls stayed enabled during auto collection');
+      }
+      await page.keyboard.down('w');
+      await page.waitForTimeout(500);
+      await page.keyboard.up('w');
+      await page.waitForTimeout(250);
+      const autoSamples = Number(await page.textContent('[data-status="samples"]'));
+      if (!Number.isFinite(autoSamples) || autoSamples < 1) {
+        throw new Error(`auto collection did not record the manual episode: ${autoSamples}`);
+      }
+      await page.click('#reset-button');
+      await page.waitForTimeout(700);
+      const resetSamples = Number(await page.textContent('[data-status="samples"]'));
+      if (resetSamples !== 0 || !(await autoButton.getAttribute('class'))?.includes('active')) {
+        throw new Error(`auto collection did not discard and re-arm after reset: samples=${resetSamples}`);
+      }
+      await page.click('#auto-collect-button');
     }
     if (pageErrors.length > 0) {
       throw new Error(`${viewport.name} page errors: ${pageErrors.join('\n')}`);

@@ -5,9 +5,9 @@ import { chromium } from 'playwright';
 
 const url = new URL(process.env.SIM_URL ?? 'http://127.0.0.1:4173/');
 url.searchParams.set('signals', 'green');
-const outputDirectory = resolve(process.env.OUTPUT_DIR ?? '/private/tmp/act-driving-readme-capture');
+const outputDirectory = resolve(process.env.OUTPUT_DIR ?? '/private/tmp/vla-driving-readme-capture');
 const outputVideo = resolve(outputDirectory, 'driving-turn.webm');
-const outputGif = resolve(process.env.GIF_OUTPUT ?? 'docs/images/act-driving-observation-actions.gif');
+const outputGif = resolve(process.env.GIF_OUTPUT ?? 'docs/images/vla-driving-observation-actions.gif');
 await mkdir(outputDirectory, { recursive: true });
 await mkdir(dirname(outputGif), { recursive: true });
 

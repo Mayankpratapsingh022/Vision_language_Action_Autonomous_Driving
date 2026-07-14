@@ -13,6 +13,7 @@ import type {
 } from '../types';
 import { LANGUAGE_INTENTS } from './languageIntents';
 import { configureSensorCamera } from '../visual/layers';
+import { saveDataset, type DatasetDirectoryHandle } from './datasetStorage';
 
 export class VLARecorder {
   readonly renderTarget: THREE.WebGLRenderTarget;
@@ -126,15 +127,15 @@ export class VLARecorder {
     };
   }
 
-  download(): void {
-    const dataset = this.exportDataset();
-    const blob = new Blob([JSON.stringify(dataset)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `vla_urban_dataset_${Date.now()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+  download(filename = `vla_urban_dataset_${Date.now()}.json`): Promise<'directory' | 'download'> {
+    return saveDataset(this.exportDataset(), filename, null);
+  }
+
+  saveToDirectory(
+    directory: DatasetDirectoryHandle,
+    filename: string,
+  ): Promise<'directory' | 'download'> {
+    return saveDataset(this.exportDataset(), filename, directory);
   }
 
   drawPreview(targetCanvas: HTMLCanvasElement): void {

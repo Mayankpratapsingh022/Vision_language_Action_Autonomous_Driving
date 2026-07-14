@@ -1,0 +1,13 @@
+fastapi==0.119.1
+huggingface-hub<2,>=0.36.0
+lerobot[smolvla,training]==0.6.0
+matplotlib<4,>=3.9
+numpy<2.3,>=2
+pandas<3,>=2.3
+pillow<13,>=10.4
+uvicorn[standard]<1,>=0.38
+
+[dev]
+httpx<1,>=0.27
+pytest<9,>=8.4
+ruff<1,>=0.12
