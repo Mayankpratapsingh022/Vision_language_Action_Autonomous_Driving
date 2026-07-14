@@ -5,6 +5,7 @@
   "run_name": "smolvla-left-turn-v1",
   "seed": 42,
   "fps": 10,
+  "video_backend": "pyav",
   "steps": 20000,
   "batch_size": 32,
   "num_workers": 8,

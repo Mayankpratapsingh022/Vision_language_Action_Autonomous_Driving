@@ -14,6 +14,7 @@ class TrainConfig:
     run_name: str = "smolvla-left-turn-v1"
     seed: int = 42
     fps: int = 10
+    video_backend: str = "pyav"
     steps: int = 20_000
     batch_size: int = 32
     num_workers: int = 8
@@ -50,7 +51,7 @@ class TrainConfig:
         return config
 
     def validate(self) -> None:
-        for name in ("dataset_repo", "model_repo", "base_model", "run_name"):
+        for name in ("dataset_repo", "model_repo", "base_model", "run_name", "video_backend"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} must not be empty")
         if any(not source.strip() or not destination.strip() for source, destination in self.rename_map.items()):

@@ -29,6 +29,7 @@ def build_train_command(
         [
             f"--dataset.repo_id={config.dataset_repo}",
             f"--dataset.eval_split={config.eval_split}",
+            f"--dataset.video_backend={config.video_backend}",
             f"--dataset.image_transforms.enable={_bool(config.image_augmentation)}",
             "--dataset.image_transforms.max_num_transforms=3",
             "--dataset.image_transforms.random_order=true",

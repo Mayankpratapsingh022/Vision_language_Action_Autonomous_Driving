@@ -12,6 +12,7 @@ def test_new_training_command_uses_pretrained_smolvla(tmp_path: Path) -> None:
     assert "--policy.n_action_steps=3" in command
     assert "--policy.freeze_vision_encoder=false" in command
     assert "--dataset.eval_split=0.1" in command
+    assert "--dataset.video_backend=pyav" in command
     assert '--rename_map={"observation.images.front":"observation.images.camera1"}' in command
 
 

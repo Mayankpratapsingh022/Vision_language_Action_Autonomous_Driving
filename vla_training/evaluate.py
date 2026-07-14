@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-split", type=float, default=0.1)
     parser.add_argument("--max-episodes", type=int, default=0)
     parser.add_argument("--device", default="auto", choices=("auto", "cuda", "mps", "cpu"))
+    parser.add_argument("--video-backend", default="pyav", choices=("pyav", "torchcodec"))
     return parser.parse_args()
 
 
@@ -36,7 +37,7 @@ def main() -> None:
     except ImportError as error:
         raise RuntimeError("LeRobot is required for checkpoint evaluation") from error
 
-    dataset = LeRobotDataset(args.dataset_repo, root=args.dataset_root)
+    dataset = LeRobotDataset(args.dataset_repo, root=args.dataset_root, video_backend=args.video_backend)
     total_episodes = dataset.num_episodes
     eval_count = math.ceil(total_episodes * args.eval_split)
     episode_ids = list(range(total_episodes - eval_count, total_episodes))
@@ -191,4 +192,3 @@ def write_plots(targets: np.ndarray, predictions: np.ndarray, output_dir: Path) 
 
 if __name__ == "__main__":
     main()
-

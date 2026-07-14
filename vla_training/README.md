@@ -25,6 +25,7 @@ The default configuration:
 | Vision encoder | Trainable |
 
 The converter keeps the descriptive dataset key `observation.images.front`. During fine-tuning, LeRobot maps it to the pretrained SmolVLA camera slot `observation.images.camera1`; the saved preprocessor retains that mapping for evaluation and inference.
+Video decoding is pinned to PyAV for training and held-out evaluation so the run does not depend on the Pod image's TorchCodec and FFmpeg ABI combination.
 
 ## Environment
 

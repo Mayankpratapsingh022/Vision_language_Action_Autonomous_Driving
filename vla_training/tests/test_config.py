@@ -10,6 +10,7 @@ def test_left_turn_config_loads() -> None:
     assert config.base_model == "lerobot/smolvla_base"
     assert config.chunk_size == 20
     assert config.action_steps == 3
+    assert config.video_backend == "pyav"
     assert not config.freeze_vision_encoder
     assert config.rename_map == {"observation.images.front": "observation.images.camera1"}
 
