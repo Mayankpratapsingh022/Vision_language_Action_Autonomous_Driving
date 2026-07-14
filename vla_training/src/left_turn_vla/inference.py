@@ -28,13 +28,16 @@ def resolve_device(requested: str = "auto") -> str:
 class SmolVLADriver:
     def __init__(self, model_path: str | Path, *, device: str = "auto", cache_dir: str | Path | None = None):
         import torch
+        from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import make_pre_post_processors
         from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         self.model_path = str(model_path)
         self.device = resolve_device(device)
-        config = SmolVLAConfig.from_pretrained(self.model_path, cache_dir=cache_dir)
+        config = PreTrainedConfig.from_pretrained(self.model_path, cache_dir=cache_dir)
+        if not isinstance(config, SmolVLAConfig):
+            raise TypeError(f"Expected a SmolVLA checkpoint, got policy type {config.type!r}")
         config.device = self.device
         self.policy = SmolVLAPolicy.from_pretrained(
             self.model_path,
